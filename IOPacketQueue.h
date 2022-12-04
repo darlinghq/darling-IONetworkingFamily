@@ -47,7 +47,8 @@ struct IOMbufQueue;
     access to the queue between methods that have a "lock" prefix. 
 */
 
-class IOPacketQueue : public OSObject
+
+class __exported IOPacketQueue : public OSObject
 {   
     OSDeclareDefaultStructors( IOPacketQueue )
 
@@ -66,7 +67,7 @@ protected:
     pool, resource are deallocated, then super::free() is called. 
 */
 
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 /*! @var IOPacketQueueDefaultCapacity 
     @abstract Describes the default capacity of the 

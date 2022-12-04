@@ -95,7 +95,8 @@ enum {
     the queue. 
 */
 
-class IOOutputQueue : public OSObject
+
+class __exported IOOutputQueue : public OSObject
 {
     OSDeclareAbstractStructors( IOOutputQueue )
 
@@ -118,14 +119,14 @@ protected:
     @result Returns true if initialized successfully, false otherwise. 
 */
 
-    virtual bool init();
+    virtual bool init() APPLE_KEXT_OVERRIDE;
 
 /*! @function free
     @abstract Frees the IOOutputQueue object.
     @discussion Release allocated resources, then call super::free(). 
 */
 
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
 /*! @function scheduleServiceThread
     @abstract Schedules a service thread callout.
