@@ -52,6 +52,7 @@ extern "C" {
 #include <IOKit/network/IOEthernetController.h>  // for setAggressiveness()
 #include "IONetworkStack.h"
 #include "IONetworkDebug.h"
+#include "IONetworkControllerPrivate.h"
 
 #define super IOService
 OSDefineMetaClassAndFinalStructors( IONetworkStack, IOService )
@@ -66,8 +67,8 @@ OSDefineMetaClassAndFinalStructors( IONetworkStack, IOService )
 
 #define NIF_NO_BSD_ATTACH(n)    ((n)->_clientVar[2])
 
-#define LOCK()                  IOLockLock(_stateLock)
-#define UNLOCK()                IOLockUnlock(_stateLock)
+#define LOCK()                  IORecursiveLockLock(_stateLock)
+#define UNLOCK()                IORecursiveLockUnlock(_stateLock)
 
 #define kDetachStateKey         "detach state"
 
@@ -99,11 +100,11 @@ public:
     virtual bool initWithTask(	task_t			owningTask,
                                 void *			securityID,
                                 UInt32			type,
-                                OSDictionary *	properties );
-    virtual bool start( IOService * provider );
-    virtual IOReturn clientClose( void );
-    virtual IOReturn clientDied( void );
-    virtual IOReturn setProperties( OSObject * properties );
+                                OSDictionary *	properties ) APPLE_KEXT_OVERRIDE;
+    virtual bool start( IOService * provider ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn clientClose( void ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn clientDied( void ) APPLE_KEXT_OVERRIDE;
+    virtual IOReturn setProperties( OSObject * properties ) APPLE_KEXT_OVERRIDE;
 };
 
 //------------------------------------------------------------------------------
@@ -129,7 +130,7 @@ bool IONetworkStack::start( IOService * provider )
     if (super::start(provider) == false)
         goto fail;
 
-    _stateLock = IOLockAlloc();
+    _stateLock = IORecursiveLockAlloc();
     if (!_stateLock)
         goto fail;
 
@@ -196,6 +197,7 @@ bool IONetworkStack::start( IOService * provider )
     _sleepWakeNotifier = registerPrioritySleepWakeInterest(
                             &IONetworkStack::handleSystemSleep, (void *) this);
 
+
     registerService();
     return true;
 
@@ -214,6 +216,12 @@ void IONetworkStack::stop( IOService * provider )
         _sleepWakeNotifier = 0;
     }
     super::stop(provider);
+}
+
+bool IONetworkStack::finalize( IOOptionBits options )
+{
+
+    return super::finalize(options);
 }
 
 //------------------------------------------------------------------------------
@@ -269,7 +277,7 @@ void IONetworkStack::free( void )
 
     if (_stateLock)
     {
-        IOLockFree(_stateLock);
+        IORecursiveLockFree(_stateLock);
         _stateLock = 0;
     }
 
@@ -507,7 +515,8 @@ void IONetworkStack::asyncWork( void )
     while (1)
     {
         d_netif = a_netif = 0;
-
+        varBits = 0;
+        
         LOCK();
         if (_ifListDetach)
         {
@@ -759,7 +768,6 @@ IOReturn IONetworkStack::attachNetworkInterfaceToBSD( IONetworkInterface * netif
 {
     bool        attachOK     = false;
     bool        detachWakeup = false;
-    bool        pingMatching = false;
     char        ifname[32];
     IOReturn    result;
 
@@ -795,8 +803,9 @@ IOReturn IONetworkStack::attachNetworkInterfaceToBSD( IONetworkInterface * netif
 
     if (attachOK)
     {
-        NIF_SET( netif, kInterfaceStateAttached  );
-        pingMatching = true;
+        bool pingMatching = true;
+
+        NIF_SET( netif, kInterfaceStateAttached );
 
         if (NIF_TEST(netif, kInterfaceStateInactive))
         {
@@ -808,6 +817,12 @@ IOReturn IONetworkStack::attachNetworkInterfaceToBSD( IONetworkInterface * netif
                 detachWakeup = true;
             }
             pingMatching = false;
+        }
+
+        if (pingMatching && !netif->isInactive())
+        {
+            // Re-register interface after setting kIOBSDNameKey.
+            netif->registerService();
         }
     }
     else
@@ -831,12 +846,6 @@ IOReturn IONetworkStack::attachNetworkInterfaceToBSD( IONetworkInterface * netif
         // In the event that an interface was terminated while attaching
         // to BSD, re-schedule the BSD detach and interface close.
         thread_call_enter(_asyncThread);
-    }
-
-    if (pingMatching)
-    {
-        // Re-register interface after setting kIOBSDNameKey.
-        netif->registerService();
     }
 
     return result;
